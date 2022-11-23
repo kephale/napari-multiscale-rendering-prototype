@@ -9,17 +9,26 @@
 
 A prototype for multiscale rendering in napari
 
-----------------------------------
+## Prerequisites
 
-This [napari] plugin was generated with [Cookiecutter] using [@napari]'s [cookiecutter-napari-plugin] template.
+A napari that has the new async support
+(e.g. https://github.com/napari/napari/pull/5353 or the async prototype)
 
-<!--
-Don't miss the full getting started guide to set up your new package:
-https://github.com/napari/cookiecutter-napari-plugin#getting-started
+and also:
 
-and review the napari docs for plugin developers:
-https://napari.org/stable/plugins/index.html
--->
+```
+pip install fibsem_tools
+```
+
+## Running
+
+```
+python
+src/napari_multiscale_rendering_prototype/multiscale_prototype.py
+```
+
+The screen will show up black initially. Press `k` every time you want
+to trigger a multiscale refesh.
 
 ## Installation
 
@@ -43,6 +52,18 @@ the coverage at least stays the same before you submit a pull request.
 
 Distributed under the terms of the [BSD-3] license,
 "napari-multiscale-rendering-prototype" is free and open source software
+
+## Cookiecutter
+
+This [napari] plugin was generated with [Cookiecutter] using [@napari]'s [cookiecutter-napari-plugin] template.
+
+<!--
+Don't miss the full getting started guide to set up your new package:
+https://github.com/napari/cookiecutter-napari-plugin#getting-started
+
+and review the napari docs for plugin developers:
+https://napari.org/stable/plugins/index.html
+-->
 
 ## Issues
 

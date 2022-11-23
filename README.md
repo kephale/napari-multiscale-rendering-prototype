@@ -30,6 +30,14 @@ src/napari_multiscale_rendering_prototype/multiscale_prototype.py
 The screen will show up black initially. Press `k` every time you want
 to trigger a multiscale refesh.
 
+## TODOs
+
+- fix hard coded Z position
+- generalize numpy "canvas"
+- link to camera/dims changed event for starting new rendering sequence
+- add a cache for chunk fetching
+- multithread chunk materialization
+
 ## Installation
 
 You can install `napari-multiscale-rendering-prototype` via [pip]:

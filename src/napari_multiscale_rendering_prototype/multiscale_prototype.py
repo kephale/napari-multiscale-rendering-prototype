@@ -1,3 +1,4 @@
+import functools
 import napari
 import numpy as np
 from fibsem_tools.io import read_xarray
@@ -24,6 +25,15 @@ layer = viewer.add_image(empty)
 
 layer.contrast_limits_range = (0, 1)
 layer.contrast_limits = (0, 1)
+
+# TODO use a local zarr disk cache?
+@functools.lru_cache(maxsize=1024)
+def get_chunk(scale, x, y, z):
+    array = arrays[scale]
+    real_array = np.asarray(
+        array[y : (y + chunk_size[0]), x : (x + chunk_size[1]), z].compute()
+    )
+    return real_array
 
 
 # Yield after each chunk is fetched
@@ -57,11 +67,7 @@ def animator(corner_pixels):
                 # TODO z is hardcoded now
                 z = int(150 / (2**scale))
                 # Trigger a fetch of the data
-                real_array = np.asarray(
-                    array[
-                        y : (y + chunk_size[0]), x : (x + chunk_size[1]), z
-                    ].compute()
-                )
+                real_array = get_chunk(scale, x, y, z)
                 # Upscale the data to highest resolution
                 upscaled = resize(
                     real_array, [el * 2**scale for el in real_array.shape]

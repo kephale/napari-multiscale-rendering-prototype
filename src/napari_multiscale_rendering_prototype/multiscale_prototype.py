@@ -4,7 +4,9 @@ import numpy as np
 from fibsem_tools.io import read_xarray
 from napari.qt.threading import thread_worker
 from skimage.transform import resize
+from napari.utils.events import Event
 
+global viewer
 viewer = napari.Viewer()
 
 # TODO fix a lot of hard coding in here
@@ -82,8 +84,12 @@ worker = None
 
 # Key press will trigger a new multiscale refresh
 @viewer.bind_key("k")
-def dims_update_handler(viewer):
-    global worker
+def dims_update_handler(invar):
+    global worker, viewer
+
+    # This function can be triggered 2 different ways, one way gives us an Event
+    if type(invar) is not Event:
+        viewer = invar
 
     # Terminate existing multiscale render pass
     if worker:
@@ -123,5 +129,6 @@ def dims_update_handler(viewer):
 
 # TODO connect the update to camera/dims changes
 viewer.dims.events.current_step.connect(dims_update_handler)
+viewer.camera.events.zoom.connect(dims_update_handler)
 
 napari.run()

@@ -38,36 +38,50 @@ def get_chunk(scale, x, y, z):
     return real_array
 
 
+def chunks_for_scale(corner_pixels, array, scale):
+    # Scale corner pixels to current scale level
+    y1, x1 = corner_pixels[0, :] / (2**scale)
+    y2, x2 = corner_pixels[1, :] / (2**scale)
+
+    # Find the extent from the current corner pixels, limit by data shape
+    y1 = int(np.floor(y1 / chunk_size[0]) * chunk_size[0])
+    x1 = int(np.floor(x1 / chunk_size[1]) * chunk_size[1])
+    y2 = min(int(np.ceil(y2 / chunk_size[0]) * chunk_size[0]), array.shape[0])
+    x2 = min(int(np.ceil(x2 / chunk_size[1]) * chunk_size[1]), array.shape[1])
+
+    xs = range(x1, x2, chunk_size[1])
+    ys = range(y1, y2, chunk_size[0])
+
+    for x in xs:
+        for y in ys:
+            # TODO z is hardcoded now
+            z = int(150 / (2**scale))
+            yield (scale, x, y, z)
+
+
+from itertools import islice
+
+# from multiprocessing import Pool
+from threading import Thread
+
+num_threads = 5
+
+# A RenderSequence is a generator that progressively populates data
+# in a way that allows it to be rendered when partially loaded.
 # Yield after each chunk is fetched
 @thread_worker
-def animator(corner_pixels):
+def render_sequence(corner_pixels):
     # NOTE this corner_pixels means something else and should be renamed
     # it is further limited to the visible data on the vispy canvas
 
     for scale in reversed(range(4)):
         array = arrays[scale]
 
-        # Scale corner pixels to current scale level
-        y1, x1 = corner_pixels[0, :] / (2**scale)
-        y2, x2 = corner_pixels[1, :] / (2**scale)
+        chunks_to_fetch = list(chunks_for_scale(corner_pixels, array, scale))
 
-        # Find the extent from the current corner pixels, limit by data shape
-        y1 = int(np.floor(y1 / chunk_size[0]) * chunk_size[0])
-        x1 = int(np.floor(x1 / chunk_size[1]) * chunk_size[1])
-        y2 = min(
-            int(np.ceil(y2 / chunk_size[0]) * chunk_size[0]), array.shape[0]
-        )
-        x2 = min(
-            int(np.ceil(x2 / chunk_size[1]) * chunk_size[1]), array.shape[1]
-        )
-
-        xs = range(x1, x2, chunk_size[1])
-        ys = range(y1, y2, chunk_size[0])
-
-        for x in xs:
-            for y in ys:
-                # TODO z is hardcoded now
-                z = int(150 / (2**scale))
+        if num_threads == 1:
+            # Single threaded:
+            for (scale, x, y, z) in chunks_to_fetch:
                 # Trigger a fetch of the data
                 real_array = get_chunk(scale, x, y, z)
                 # Upscale the data to highest resolution
@@ -76,6 +90,87 @@ def animator(corner_pixels):
                 )
                 # Return upscaled coordinates, the scale, and chunk
                 yield (x * 2**scale, y * 2**scale, z, scale, upscaled)
+        if False:
+            # multiprocessing spawns tons of naparis and crashes the OS
+            # Multi threaded:
+            with Pool(num_threads) as p:
+                # Make a list of num_threads length sublists
+                job_sets = [
+                    chunks_to_fetch[i : i + num_threads]
+                    for i in range(0, len(chunks_to_fetch), num_threads)
+                ]
+                for job_set in job_sets:
+                    # Evaluate the jobs in parallel
+                    chunks = p.map(get_chunk, job_set)
+                    # Yield the chunks that are done
+                    for idx in range(len(chunks)):
+                        # Get job parameters
+                        scale, x, y, z = job_sets[idx]
+                        # This contains the real data
+                        real_array = chunks[idx]
+                        # Upscale the data to highest resolution
+                        upscaled = resize(
+                            real_array,
+                            [el * 2**scale for el in real_array.shape],
+                        )
+                        # Return upscaled coordinates, the scale, and chunk
+                        yield (
+                            x * 2**scale,
+                            y * 2**scale,
+                            z,
+                            scale,
+                            upscaled,
+                        )
+        else:
+            # Make a list of num_threads length sublists
+            job_sets = [
+                chunks_to_fetch[i : i + num_threads]
+                for i in range(0, len(chunks_to_fetch), num_threads)
+            ]
+
+            def mutable_get_chunk(results, idx, scale, x, y, z):
+                results[idx] = get_chunk(scale, x, y, z)
+
+            for job_set in job_sets:
+                # Evaluate the jobs in parallel
+                # chunks = p.map(get_chunk, job_set)
+                # We need a mutable result
+                chunks = [None] * len(job_set)
+                # Make the threads
+                threads = [
+                    Thread(
+                        target=mutable_get_chunk,
+                        args=[chunks, idx] + list(args),
+                    )
+                    for idx, args in enumerate(job_set)
+                ]
+                # Start threads
+                for thread in threads:
+                    thread.start()
+
+                # Collect
+                for thread in threads:
+                    thread.join()
+
+                # Yield the chunks that are done
+                for idx in range(len(chunks)):
+                    # Get job parameters
+                    scale, x, y, z = job_set[idx]
+                    # This contains the real data
+                    real_array = chunks[idx]
+                    # Upscale the data to highest resolution
+                    upscaled = resize(
+                        real_array,
+                        [el * 2**scale for el in real_array.shape],
+                    )
+                    # Return upscaled coordinates, the scale, and chunk
+                    yield (
+                        x * 2**scale,
+                        y * 2**scale,
+                        z,
+                        scale,
+                        upscaled,
+                    )
 
 
 global worker
@@ -93,6 +188,7 @@ def dims_update_handler(invar):
 
     # Terminate existing multiscale render pass
     if worker:
+        # TODO this might not terminate threads properly
         worker.quit()
 
     # Find the corners of visible data in the canvas
@@ -113,7 +209,7 @@ def dims_update_handler(invar):
     corners = np.array([top_left, bottom_right], dtype=int)
 
     # Start a new multiscale render
-    worker = animator(corners)
+    worker = render_sequence(corners)
 
     # This will consume our chunks and update the numpy "canvas" and refresh
     def on_yield(coord):

@@ -21,12 +21,8 @@ arrays = [
     for scale in scale_levels
 ]
 
-# We ware going to use this np array as our "canvas"
-empty = np.zeros((11087, 10000))
-layer = viewer.add_image(empty)
+# TODO replace the chunk fetcher with a proper implementation
 
-layer.contrast_limits_range = (0, 1)
-layer.contrast_limits = (0, 1)
 
 # TODO use a local zarr disk cache?
 @functools.lru_cache(maxsize=1024)
@@ -58,6 +54,14 @@ def chunks_for_scale(corner_pixels, array, scale):
             z = int(150 / (2**scale))
             yield (scale, x, y, z)
 
+
+# We ware going to use this np array as our "canvas"
+# TODO at least get this size from the image
+empty = np.zeros((11087, 10000))
+layer = viewer.add_image(empty)
+
+layer.contrast_limits_range = (0, 1)
+layer.contrast_limits = (0, 1)
 
 from itertools import islice
 

@@ -1,4 +1,3 @@
-import functools
 import napari
 import numpy as np
 from fibsem_tools.io import read_xarray
@@ -39,8 +38,7 @@ def get_chunk(
             array[
                 y : (y + large_image["chunk_size"][0]),
                 x : (x + large_image["chunk_size"][1]),
-                z
-                #                z : (z + large_image["chunk_size"][2]),
+                z,
             ].compute()
         )
         cache_manager.put(container, dataset, coord, real_array)
@@ -100,16 +98,28 @@ def chunks_for_scale(corner_pixels, array, scale):
                 yield (x, y, z)
 
 
+class LargeImageArray(object):
+    def __init__(self, array):
+        self.array = array
+
+        for k in dir(array):
+            if k not in ["__class__"]:
+                setattr(LargeImageArray, k, getattr(array, k))
+
+
 # We ware going to use this np array as our "canvas"
 # TODO at least get this size from the image
 empty = np.zeros(large_image["arrays"][0].shape[:-1])
 
+# wrapped = LargeImageArray(empty)
+wrapped = empty
+
 # What if this was a dask array of zeros like the highest res input array
 # empty = da.zeros_like(large_image["arrays"][0])
 
-print(f"canvas {empty.shape}")
+print(f"canvas {wrapped.shape}")
 
-layer = viewer.add_image(empty)
+layer = viewer.add_image(wrapped)
 
 layer.contrast_limits_range = (0, 1)
 layer.contrast_limits = (0, 1)

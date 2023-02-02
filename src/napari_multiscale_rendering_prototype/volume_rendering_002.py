@@ -10,8 +10,9 @@ from napari_multiscale_rendering_prototype.utils import ChunkCacheManager
 
 import dask.array as da
 
-global viewer
 viewer = napari.Viewer(ndisplay=3)
+
+# TODO checkout from psygnal import debounced
 
 large_image = {
     "container": "s3://janelia-cosem-datasets/jrc_mus-kidney/jrc_mus-kidney.n5",
@@ -52,13 +53,24 @@ chunk_strides = [
 ]
 
 # Make an interval that is 3x3x3 for the most coarse chunk size
-view_interval = ((0, 0, 0), [3 * el for el in chunk_strides[3]])
+# view_interval = ((0, 0, 0), [3 * el for el in chunk_strides[3]])
 view_interval = ((0, 0, 0), (6144, 2048, 4096))
 
 
 def get_chunk(
     coord, array=None, container=None, dataset=None, chunk_size=(1, 1, 1)
 ):
+    """
+    coord - 3D coordinate for the top left corner (in array space)
+    array is one of the scales from the multiscale image
+    container is the zarr container name (this is used to disambiguate the cache)
+    dataset is the group in the zarr (this is used to disambiguate the cache)
+    chunk_size is the size of chunk that you want to fetch
+
+    [note there is an issue with mismatched chunk sizes clashing]
+
+    [TODO consider changing coord to a slice tuple]
+    """
     real_array = cache_manager.get(container, dataset, coord)
     if real_array is None:
         x, y, z = coord
@@ -73,7 +85,16 @@ def get_chunk(
     return real_array
 
 
-def add_subnodes(interval, scale=0, focus=(0, 0, 0)):
+def add_subnodes(interval, scale=0, focus=(0, 0, 0), viewer=viewer):
+    """
+    interval is the region of the image that you want to display this is a tuple of 2 3d tuples, defining the min/max of the region
+    scale is the current scale level being fetched (e.g. from the multiscale arrays) 0 is highest resolution
+    focus is the point that will be used to determine the chunk that is recursed at the next highest scale
+    viewer is a napari viewer that the nodes are added to
+
+    TODO maybe we should smoosh chunks together within the same resolution level
+    """
+
     # Break the interval up according to this scale's chunk stride
     min_coord, max_coord = interval
 
@@ -86,6 +107,7 @@ def add_subnodes(interval, scale=0, focus=(0, 0, 0)):
         f"add_subnodes {scale} {chunk_stride} {interval} array shape: {large_image['arrays'][scale].shape}"
     )
 
+    # Create a list of coordinates for all chunks at this scale within the interval
     while coord[2] + chunk_stride[2] <= max_coord[2]:
         coord[1] = 0
         while coord[1] + chunk_stride[1] <= max_coord[1]:
@@ -158,12 +180,17 @@ def add_subnodes(interval, scale=0, focus=(0, 0, 0)):
         print(
             f"Recursive add nodes on {min_idx} {intervals[min_idx]} for scale {scale} to {scale-1}"
         )
-        add_subnodes(intervals[min_idx], scale=scale - 1)
+        add_subnodes(intervals[min_idx], scale=scale - 1, viewer=viewer)
 
 
 # use voxel resolution, might be 2x scale
 
 # add_subnodes(((0, 0, 0), arrays[0].shape))
-add_subnodes(view_interval, scale=3)
+add_subnodes(view_interval, scale=3, viewer=viewer, focus=(2144, 1048, 2096))
+
+# TODO figure out why the focus wont work
+# work on poor-mans-octree branch
+# migrate this code into it, use the camera management
+
 
 # napari.run()

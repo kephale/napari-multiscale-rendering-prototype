@@ -26,7 +26,7 @@ container = "s3://janelia-cosem-datasets/jrc_mus-kidney/jrc_mus-kidney.n5"
 #   https://open.quiltdata.com/b/janelia-cosem-datasets/tree/jrc_mus-kidney/jrc_mus-kidney.n5/
 
 
-def _get_available_renderers(self):
+def _get_available_renderers():
 
     return ["Print info", "Show 2D", "Show 3D"]
 
@@ -39,7 +39,7 @@ class QtGroupTreeView(QGroupTreeView):
             group = index.internalPointer()
             # assert isinstance(group, Group)
             menu = QMenu()
-            readers = self._get_available_renderers()
+            readers = _get_available_renderers()
             for reader in readers:
                 self.actions.append(menu.addAction(reader))
             result = menu.exec(self.mapToGlobal(pos))

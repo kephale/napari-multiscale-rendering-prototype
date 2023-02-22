@@ -75,7 +75,7 @@ def show_2d(group, viewer):
         zarr_array = z[path]
         data.append(da.from_zarr(zarr_array, chunks=zarr_array.chunks))
 
-    viewer.add_image(data, contrast_limits=(18000, 3000), multiscale=True)
+    viewer.add_image(data, contrast_limits=(18000, 30000), multiscale=True)
 
 
 def show_3d(group, viewer):

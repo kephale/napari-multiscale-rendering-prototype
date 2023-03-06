@@ -1,8 +1,11 @@
+from pathlib import Path
+
 import dask.array as da
 import napari
 import zarr
 from fibsem_tools.io import read_xarray
 from napari_hierarchical import controller
+from napari_hierarchical.widgets._group_tree_model import QGroupTreeModel
 from napari_hierarchical.widgets._group_tree_view import QGroupTreeView
 from qtpy.QtCore import QPoint
 from qtpy.QtWidgets import QMenu, QPushButton, QTextEdit, QVBoxLayout, QWidget
@@ -47,51 +50,49 @@ class QtGroupTreeView(QGroupTreeView):
                 print_image_info(group)
 
             if result == self.actions[1]:
-                show_2d(group, controller.viewer)
+                show_image(group, controller.viewer, multi_dim=False)
             if result == self.actions[2]:
-                show_3d(group, controller.viewer)
+                show_image(group, controller.viewer, multi_dim=True)
 
 
 def print_image_info(group):
-    # container == array.zarr_file
-    # path = dataset
+
     paths = []
     for array in group.iter_arrays(recursive=True):
-
         paths.append(array.zarr_path)
-    z = zarr.open(zarr.N5FSStore(array.zarr_file, anon=True))
+
+    if Path(array.zarr_file).suffix == ".n5":
+        z = zarr.open(zarr.N5FSStore(array.zarr_file, anon=True))
+    else:
+        z = zarr.open(store=str(array.zarr_file), mode="r")
+
     for path in paths:
         zarr_array = z[path]
         print(zarr_array.shape)
 
 
-def show_2d(group, viewer):
-    cnt = 0
-    data = []
+def show_image(group, viewer, multi_dim=False):
+
+    paths = []
     for array in group.iter_arrays(recursive=True):
-        path = array.zarr_path
-        if cnt == 0:
-            z = zarr.open(zarr.N5FSStore(array.zarr_file, anon=True))
+        paths.append(array.zarr_path)
+
+    if Path(array.zarr_file).suffix == ".n5":
+        z = zarr.open(zarr.N5FSStore(array.zarr_file, anon=True))
+    else:
+        z = zarr.open(store=str(array.zarr_file), mode="r")
+
+    data = []
+    for path in paths:
         zarr_array = z[path]
         data.append(da.from_zarr(zarr_array, chunks=zarr_array.chunks))
 
-    viewer.add_image(data, contrast_limits=(18000, 30000), multiscale=True)
+    if multi_dim:
+        viewer.dims.ndisplay = 3
+        viewer.add_image(data, contrast_limits=(18000, 30000), multiscale=True)
 
-
-def show_3d(group, viewer):
-    cnt = 0
-    data = []
-    for array in group.iter_arrays(recursive=True):
-        path = array.zarr_path
-        if cnt == 0:
-            z = zarr.open(zarr.N5FSStore(array.zarr_file, anon=True))
-
-        zarr_array = z[path]
-        data.append(da.from_zarr(zarr_array, chunks=zarr_array.chunks))
-
-    viewer.dims.ndisplay = 3
-
-    viewer.add_image(data, contrast_limits=(18000, 3000), multiscale=True)
+    else:
+        viewer.add_image(data, contrast_limits=(18000, 30000), multiscale=True)
 
 
 class MultiscaleWidget(QWidget):
@@ -106,6 +107,7 @@ class MultiscaleWidget(QWidget):
             controller.register_viewer(viewer)
 
         self.treeWidget = QtGroupTreeView(controller)
+        self._hide_delegate_icons()
         self.hrl_path = QTextEdit("Enter data location")
         self.get_data_btn = QPushButton("Get Data")
 
@@ -117,6 +119,26 @@ class MultiscaleWidget(QWidget):
 
         self.hrl_path.setFixedHeight(40)
         self.get_data_btn.clicked.connect(self.get_data_from_url)
+
+    def _hide_delegate_icons(self):
+
+        itemDelegate = self.treeWidget.itemDelegateForColumn(
+            QGroupTreeModel.COLUMNS.LOADED
+        )
+        itemDelegate._icon_size = (0, 0)
+
+        self.treeWidget.setItemDelegateForColumn(
+            QGroupTreeModel.COLUMNS.LOADED, itemDelegate
+        )
+
+        itemDelegate = self.treeWidget.itemDelegateForColumn(
+            QGroupTreeModel.COLUMNS.VISIBLE
+        )
+        itemDelegate._icon_size = (0, 0)
+
+        self.treeWidget.setItemDelegateForColumn(
+            QGroupTreeModel.COLUMNS.VISIBLE, itemDelegate
+        )
 
     def get_data_from_url(self, event):
         url = self.hrl_path.toPlainText()

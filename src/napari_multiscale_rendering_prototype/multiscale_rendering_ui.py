@@ -10,6 +10,8 @@ from napari_hierarchical.widgets._group_tree_view import QGroupTreeView
 from qtpy.QtCore import QPoint
 from qtpy.QtWidgets import QMenu, QPushButton, QTextEdit, QVBoxLayout, QWidget
 
+from .poor_octree import render_poor_octree
+
 
 def open_dataset(container: str, dataset: str):
     num_scales = 4
@@ -31,7 +33,7 @@ container = "s3://janelia-cosem-datasets/jrc_mus-kidney/jrc_mus-kidney.n5"
 
 def _get_available_renderers():
 
-    return ["Print info", "Show 2D", "Show 3D"]
+    return ["Print info", "Show 2D", "Show 3D", "Poor Octree"]
 
 
 class QtGroupTreeView(QGroupTreeView):
@@ -54,11 +56,13 @@ class QtGroupTreeView(QGroupTreeView):
             if result == self.actions[2]:
                 show_image(group, controller.viewer, multi_dim=True)
 
+            if result == self.actions[3]:
+                render_poor_octree(group, controller.viewer)
+
 
 def print_image_info(group):
-
     paths = []
-    for array in group.iter_arrays(recursive=True):
+    for array in group.iter_arrays(recursive=False):
         paths.append(array.zarr_path)
 
     if Path(array.zarr_file).suffix == ".n5":
@@ -108,16 +112,16 @@ class MultiscaleWidget(QWidget):
 
         self.treeWidget = QtGroupTreeView(controller)
         self._hide_delegate_icons()
-        self.hrl_path = QTextEdit("Enter data location")
+        self.image_path = QTextEdit("Enter data location")
         self.get_data_btn = QPushButton("Get Data")
 
         layout = QVBoxLayout()
-        layout.addWidget(self.hrl_path)
+        layout.addWidget(self.image_path)
         layout.addWidget(self.get_data_btn)
         layout.addWidget(self.treeWidget)
         self.setLayout(layout)
 
-        self.hrl_path.setFixedHeight(40)
+        self.image_path.setFixedHeight(40)
         self.get_data_btn.clicked.connect(self.get_data_from_url)
 
     def _hide_delegate_icons(self):
@@ -140,8 +144,8 @@ class MultiscaleWidget(QWidget):
             QGroupTreeModel.COLUMNS.VISIBLE, itemDelegate
         )
 
-    def get_data_from_url(self, event):
-        url = self.hrl_path.toPlainText()
+    def get_data_from_url(self, event=None):
+        url = self.image_path.toPlainText()
 
         controller.read_group(url)
 
@@ -160,6 +164,10 @@ def browse_container(container: str, viewer):
     Arguments:
     - container: this is a string representing a path to a zarr
     """
+    widget = MultiscaleWidget()
+    widget.image_path.setText(container)
+    widget.get_data_from_url()
+    viewer.window.add_dock_widget(widget, name="Multiscale Widget")
 
 
 # browse_container(container, viewer)

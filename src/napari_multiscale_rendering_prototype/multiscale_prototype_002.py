@@ -1,16 +1,36 @@
+import logging
 import functools
 import napari
 import numpy as np
-from fibsem_tools.io import read_xarray
+from fibsem_tools import read_xarray
+from ome_zarr.io import parse_url
+from ome_zarr.reader import Reader
 from napari.qt.threading import thread_worker
 from skimage.transform import resize
 from napari.utils.events import Event
 import dask.array as da
+import sys
+import zarr
+
+from napari.utils import config
 
 from napari_multiscale_rendering_prototype.utils import ChunkCacheManager
 
 global viewer
 viewer = napari.Viewer()
+
+# config.async_loading = True
+
+LOGGER = logging.getLogger("tiled_rendering_2D")
+LOGGER.setLevel(logging.DEBUG)
+
+streamHandler = logging.StreamHandler(sys.stdout)
+formatter = logging.Formatter(
+    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+streamHandler.setFormatter(formatter)
+LOGGER.addHandler(streamHandler)
+
 
 large_image = {
     "container": "s3://janelia-cosem-datasets/jrc_macrophage-2/jrc_macrophage-2.n5",
@@ -26,6 +46,57 @@ large_image["arrays"] = [
     for scale in range(large_image["scale_levels"])
 ]
 
+def luethi_zenodo_7144919():
+    import os
+    import pooch
+
+    # Downloaded from https://zenodo.org/record/7144919#.Y-OvqhPMI0R
+    # TODO use pooch to fetch from zenodo
+    # zip_path = pooch.retrieve(
+    #     url="https://zenodo.org/record/7144919#.Y-OvqhPMI0R",
+    #     known_hash=None,# Update hash
+    # )
+    dest_dir = pooch.retrieve(
+        url="https://zenodo.org/record/7144919/files/20200812-CardiomyocyteDifferentiation14-Cycle1.zarr.zip?download=1",
+        known_hash="e6773fc97dcf3689e2f42e6504e0d4f4d0845c329dfbdfe92f61c2f3f1a4d55d",
+        processor=pooch.Unzip(),
+    )
+    local_container = os.path.split(dest_dir[0])[0]
+    LOGGER.info(local_container)
+    store = parse_url(local_container, mode="r").store
+    reader = Reader(parse_url(local_container))
+    nodes = list(reader())
+    image_node = nodes[0]
+    dask_data = image_node.data
+
+    large_image = {
+        "container": local_container,
+        "dataset": "B/03/0",
+        "scale_levels": 5,
+        "scale_factors": [
+            (1, 0.1625, 0.1625),
+            (1, 0.325, 0.325),
+            (1, 0.65, 0.65),
+            (1, 1.3, 1.3),
+            (1, 2.6, 2.6),
+        ],
+        "chunk_size": (1, 10, 256, 256)
+    }
+    large_image["arrays"] = []
+    for scale in range(large_image["scale_levels"]):
+        array = dask_data[scale]
+
+        # TODO extract scale_factors now
+
+        # large_image["arrays"].append(result.data.rechunk((3, 10, 256, 256)))
+        large_image["arrays"].append(
+            array.rechunk((1, 10, 256, 256)).squeeze()
+            # result.data[2, :, :, :].rechunk((10, 256, 256)).squeeze()
+        )
+    return large_image
+
+# large_image = luethi_zenodo_7144919()
+
 cache_manager = ChunkCacheManager()
 
 
@@ -37,10 +108,9 @@ def get_chunk(
         x, y, z = coord
         real_array = np.asarray(
             array[
-                y : (y + large_image["chunk_size"][0]),
-                x : (x + large_image["chunk_size"][1]),
-                z
-                #                z : (z + large_image["chunk_size"][2]),
+                z,
+                y : (y + large_image["chunk_size"][-2]),
+                x : (x + large_image["chunk_size"][-1]),                
             ].compute()
         )
         cache_manager.put(container, dataset, coord, real_array)
@@ -94,6 +164,7 @@ def chunks_for_scale(corner_pixels, array, scale):
     ys = range(y1, y2, large_image["chunk_size"][0])
     zs = range(z1, z2, large_image["chunk_size"][2])
 
+    
     for x in xs:
         for y in ys:
             for z in zs:
@@ -102,12 +173,16 @@ def chunks_for_scale(corner_pixels, array, scale):
 
 # We ware going to use this np array as our "canvas"
 # TODO at least get this size from the image
-empty = np.zeros(large_image["arrays"][0].shape[:-1])
+#empty = da.zeros(large_image["arrays"][0].shape[:-1])
+# empty = da.zeros(large_image["arrays"][0].shape, chunks=(1, 512, 512))
+empty = zarr.zeros(large_image["arrays"][0].shape, chunks=(1, 512, 512), dtype=np.uint16)
+
+# TODO let's choose a chunk size that matches the axis we'll be looking at
 
 # What if this was a dask array of zeros like the highest res input array
 # empty = da.zeros_like(large_image["arrays"][0])
 
-print(f"canvas {empty.shape}")
+LOGGER.info(f"canvas {empty.shape}")
 
 layer = viewer.add_image(empty)
 
@@ -119,7 +194,7 @@ from itertools import islice
 # from multiprocessing import Pool
 from threading import Thread
 
-num_threads = 5
+num_threads = 1
 
 # A RenderSequence is a generator that progressively populates data
 # in a way that allows it to be rendered when partially loaded.
@@ -129,16 +204,21 @@ def render_sequence(corner_pixels):
     # NOTE this corner_pixels means something else and should be renamed
     # it is further limited to the visible data on the vispy canvas
 
+    LOGGER.info("render_sequence: inside")
+    
     for scale in reversed(range(4)):
-        array = large_image["arrays"][scale]
-
+        array = large_image["arrays"][scale]        
+        
         chunks_to_fetch = list(chunks_for_scale(corner_pixels, array, scale))
+
+        LOGGER.info(f"render_sequence: {scale}, {array.shape}")
 
         if num_threads == 1:
             # Single threaded:
             for (x, y, z) in chunks_to_fetch:
                 # Trigger a fetch of the data
                 dataset = f"{large_image['dataset']}/s{scale}"
+                LOGGER.info("render_sequence: get_chunk")
                 real_array = get_chunk(
                     (x, y, z),
                     array=array,
@@ -150,6 +230,7 @@ def render_sequence(corner_pixels):
                 upscaled = resize(
                     real_array, [el * 2**scale for el in real_array.shape]
                 )
+                LOGGER.info(f"yielding: {(x * 2**scale, y * 2**scale, z, scale, upscaled, upscaled.shape)}")
                 # Return upscaled coordinates, the scale, and chunk
                 yield (x * 2**scale, y * 2**scale, z, scale, upscaled)
         else:
@@ -218,6 +299,8 @@ worker = None
 def dims_update_handler(invar):
     global worker, viewer
 
+    LOGGER.info("dims_update_handler")
+    
     # This function can be triggered 2 different ways, one way gives us an Event
     if type(invar) is not Event:
         viewer = invar
@@ -228,31 +311,37 @@ def dims_update_handler(invar):
         worker.quit()
 
     # Find the corners of visible data in the canvas
-    corner_pixels = layer.corner_pixels
+    corner_pixels = viewer.layers[0].corner_pixels
     canvas_corners = viewer.window.qt_viewer._canvas_corners_in_world.astype(
         int
     )
 
     top_left = (
-        int(np.max((corner_pixels[0, 0], canvas_corners[0, 0]))),
-        int(np.max((corner_pixels[0, 1], canvas_corners[0, 1]))),
+        int(np.max((corner_pixels[-2, -2], canvas_corners[-2, -2]))),
+        int(np.max((corner_pixels[-2, -1], canvas_corners[-2, -1]))),
     )
     bottom_right = (
-        int(np.min((corner_pixels[1, 0], canvas_corners[1, 0]))),
-        int(np.min((corner_pixels[1, 1], canvas_corners[1, 1]))),
+        int(np.min((corner_pixels[-1, -2], canvas_corners[-1, -2]))),
+        int(np.min((corner_pixels[-1, -1], canvas_corners[-1, -1]))),
     )
 
     corners = np.array([top_left, bottom_right], dtype=int)
 
+    LOGGER.info("dims_update_handler: start render_sequence")
+    
     # Start a new multiscale render
     worker = render_sequence(corners)
+
+    LOGGER.info("dims_update_handler: started render_sequence")
 
     # This will consume our chunks and update the numpy "canvas" and refresh
     def on_yield(coord):
         x, y, z, scale, chunk = coord
         chunk_size = chunk.shape
-        layer.data[y : (y + chunk_size[0]), x : (x + chunk_size[1])] = chunk
-        layer.refresh()
+        LOGGER.info(f"Writing chunk to: {(viewer.dims.current_step[0], y, x)}")
+        layer.data[viewer.dims.current_step[0], y : (y + chunk_size[-2]), x : (x + chunk_size[-1])] = chunk[:chunk_size[-2], :chunk_size[-1]]
+        if np.random.rand() < 0.1:
+            layer.refresh()
 
     worker.yielded.connect(on_yield)
 
@@ -263,4 +352,4 @@ viewer.camera.events.zoom.connect(dims_update_handler)
 viewer.camera.events.center.connect(dims_update_handler)
 
 
-# napari.run()
+napari.run()

@@ -1,3 +1,5 @@
+import os
+from functools import partial
 from pathlib import Path
 
 import dask.array as da
@@ -33,7 +35,20 @@ container = "s3://janelia-cosem-datasets/jrc_mus-kidney/jrc_mus-kidney.n5"
 
 def _get_available_renderers():
 
-    return ["Print info", "Show 2D", "Show 3D", "Poor Octree"]
+    return {
+        "Print info": partial(print_image_info),
+        "Show 2D": partial(show_image, multi_dim=False),
+        "Show 3D": partial(show_image, multi_dim=True),
+        "Poor Octree": partial(render_poor_octree),
+    }
+
+
+def _example_data():
+
+    return {
+        "Kidney example": "s3://janelia-cosem-datasets/jrc_mus-kidney/jrc_mus-kidney.n5",  # noqa: E501
+        "Luthi Zenodo example": "",
+    }
 
 
 class QtGroupTreeView(QGroupTreeView):
@@ -42,25 +57,19 @@ class QtGroupTreeView(QGroupTreeView):
         self.actions = []
         if index.isValid():
             group = index.internalPointer()
-            # assert isinstance(group, Group)
             menu = QMenu()
             readers = _get_available_renderers()
-            for reader in readers:
-                self.actions.append(menu.addAction(reader))
+            render_fn_map = {}
+            for reader, reader_fn in readers.items():
+                action = menu.addAction(reader)
+                self.actions.append(action)
+                render_fn_map[action] = reader_fn
             result = menu.exec(self.mapToGlobal(pos))
-            if result == self.actions[0]:
-                print_image_info(group)
-
-            if result == self.actions[1]:
-                show_image(group, controller.viewer, multi_dim=False)
-            if result == self.actions[2]:
-                show_image(group, controller.viewer, multi_dim=True)
-
-            if result == self.actions[3]:
-                render_poor_octree(group, controller.viewer)
+            if result in self.actions:
+                render_fn_map[result](group, controller.viewer)
 
 
-def print_image_info(group):
+def print_image_info(group, viewer):
     paths = []
     for array in group.iter_arrays(recursive=False):
         paths.append(array.zarr_path)
@@ -113,16 +122,34 @@ class MultiscaleWidget(QWidget):
         self.treeWidget = QtGroupTreeView(controller)
         self._hide_delegate_icons()
         self.image_path = QTextEdit("Enter data location")
+        self.example_button = QPushButton("Example Data")
+        self.examples_menu = QMenu()
+        self.example_button.setMenu(self.examples_menu)
         self.get_data_btn = QPushButton("Get Data")
 
         layout = QVBoxLayout()
         layout.addWidget(self.image_path)
         layout.addWidget(self.get_data_btn)
+        layout.addWidget(self.example_button)
         layout.addWidget(self.treeWidget)
         self.setLayout(layout)
 
         self.image_path.setFixedHeight(40)
         self.get_data_btn.clicked.connect(self.get_data_from_url)
+
+        def _get_example_data():
+            action = self.sender()
+            path = self.example_dict[action.text()]
+            if action.text() == "Luthi Zenodo example":
+                path = luethi_zenodo_7144919()
+            self.image_path.setText(path)
+            self.get_data_from_url()
+
+        self.example_dict = _example_data()
+        for ex, ex_path in self.example_dict.items():
+
+            action = self.examples_menu.addAction(ex)
+            action.triggered.connect(_get_example_data)
 
     def _hide_delegate_icons(self):
 
@@ -170,15 +197,15 @@ def browse_container(container: str, viewer):
     viewer.window.add_dock_widget(widget, name="Multiscale Widget")
 
 
-# browse_container(container, viewer)
-# This should open the `browse_container` widget in napari
-# Provide a simple right click context menu that uses `open_dataset` and
-# prints the shapes of all arrays in a multiscale dataset
-# for example, use:
-# - container = "s3://janelia-cosem-datasets/jrc_mus-kidney/jrc_mus-kidney.n5"
-# - dataset = "labels/empanada-mito_seg"
-# The shapes should be:
-# - (11099, 3988, 6143)
-# - (5549, 1994, 3071)
-# - (2774, 997, 1535)
-# - (1387, 498, 767)
+def luethi_zenodo_7144919():
+    import pooch
+
+    # Downloaded from https://zenodo.org/record/7144919#.Y-OvqhPMI0R
+    # TODO use pooch to fetch from zenodo
+    dest_dir = pooch.retrieve(
+        url="https://zenodo.org/record/7144919/files/20200812-CardiomyocyteDifferentiation14-Cycle1.zarr.zip?download=1",  # noqa: E501
+        known_hash="e6773fc97dcf3689e2f42e6504e0d4f4d0845c329dfbdfe92f61c2f3f1a4d55d",  # noqa: E501
+        processor=pooch.Unzip(),
+    )
+    local_container = os.path.split(dest_dir[0])[0]
+    return local_container

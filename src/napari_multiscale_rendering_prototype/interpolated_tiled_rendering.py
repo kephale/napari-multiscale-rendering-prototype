@@ -279,7 +279,7 @@ empty = VirtualData(np.uint16, large_image["arrays"][0].shape)
 
 LOGGER.info(f"canvas {empty.shape} and interpolated")
 
-layer = viewer.add_image(empty)
+layer = viewer.add_image(empty, contrast_limits=[20000, 30000])
 
 layer.contrast_limits_range = (0, 1)
 layer.contrast_limits = (0, 1)

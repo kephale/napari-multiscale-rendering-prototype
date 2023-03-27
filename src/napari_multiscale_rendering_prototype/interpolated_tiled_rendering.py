@@ -112,11 +112,11 @@ Coord may be between indices, if so, we need to interpolate
             try:
                 lvalue = get_chunk(lcoord, array=array, container=container, dataset=dataset)
             except:
-                lvalue = np.zeros([1] + array.data.chunksize[-2:])
+                lvalue = np.zeros([1] + list(array.data.chunksize[-2:]))
             try:
                 rvalue = get_chunk(rcoord, array=array, container=container, dataset=dataset)
             except:
-                rvalue = np.zeros([1] + array.data.chunksize[-2:])
+                rvalue = np.zeros([1] + list(array.data.chunksize[-2:]))
             # Linear weight between left/right, assumes parallel
             w = coord[0] - lcoord[0]
             # print(f"interpolated_get_chunk: {lcoord} @ {lvalue.shape}, {rcoord} @ {rvalue.shape}")
@@ -289,8 +289,78 @@ from itertools import islice
 # from multiprocessing import Pool
 from threading import Thread
 
-num_threads = 1
 
+num_threads = 10
+
+def chunk_fetcher(coord, scale, array):
+    z, y, x = coord
+
+    # Trigger a fetch of the data
+    dataset = f"{large_image['dataset']}/s{scale}"
+    LOGGER.info("render_sequence: get_chunk")
+    real_array = interpolated_get_chunk(
+        (z, y, x),
+        array=array,
+        container=large_image["container"],
+        dataset=dataset,
+    )
+    # Upscale the data to highest resolution
+    upscaled = img_as_uint(
+        resize(
+            real_array,
+            [el * 2**scale for el in real_array.shape],
+        )
+    )                
+    # upscaled = img_as_uint(rescale(real_array, 2**scale))
+    
+    # Use this to overwrite data and then use a colormap to debug where resolution levels go
+    # upscaled = np.ones_like(upscaled) * scale
+                
+    LOGGER.info(
+        f"yielding: {(z * 2**scale, y * 2**scale, x * 2**scale, scale, upscaled.shape)} sample {upscaled[10:20,10]} with sum {upscaled.sum()}"
+    )
+    # Return upscaled coordinates, the scale, and chunk
+    chunk_size = upscaled.shape
+
+    LOGGER.info(
+        f"yield will be placed at: {(z * 2**scale, y * 2**scale, x * 2**scale, scale, upscaled.shape)}"
+    )
+
+    upscaled_chunk_size = [0, 0]
+    upscaled_chunk_size[0] = min(
+        large_image["arrays"][0].shape[-2] - y * 2**scale,
+        chunk_size[-2],
+    )
+    upscaled_chunk_size[1] = min(
+        large_image["arrays"][0].shape[-1] - x * 2**scale,
+        chunk_size[-1],
+    )
+
+    # overflow = np.array(large_image["arrays"][0].shape[-2:]) - (np.array((y, x)) + np.array(chunk_size))
+
+    # layer.data[z, y : (y + chunk_size[-2]), x : (x + chunk_size[-1])]
+
+    upscaled = upscaled[
+        : upscaled_chunk_size[-2], : upscaled_chunk_size[-1]
+    ]
+
+    # if sum(upscaled[10:20,10]) > 0:
+    #        import pdb; pdb.set_trace()
+    
+    # if y == 0 and (x * 2**scale) == 7680:
+    #     import pdb; pdb.set_trace()
+    
+    # TODO pickup here, figure out why this is being placed out of bounds and crop it correctly
+    # [z, y : (y + chunk_size[-2]), x : (x + chunk_size[-1])]
+    
+    return (
+        z * 2**scale,
+        y * 2**scale,
+        x * 2**scale,
+        scale,
+        upscaled,
+        upscaled_chunk_size,
+    )
 
 # A RenderSequence is a generator that progressively populates data
 # in a way that allows it to be rendered when partially loaded.
@@ -316,131 +386,58 @@ def render_sequence(corner_pixels):
 
         if num_threads == 1:
             # Single threaded:
-            for z, y, x in chunks_to_fetch:
-                # TODO this is where interpolation should be performed
-                
-                # Trigger a fetch of the data
-                dataset = f"{large_image['dataset']}/s{scale}"
-                LOGGER.info("render_sequence: get_chunk")
-                real_array = interpolated_get_chunk(
-                    (z, y, x),
-                    array=array,
-                    container=large_image["container"],
-                    dataset=dataset,
-                )
-                # Upscale the data to highest resolution
-                upscaled = img_as_uint(
-                    resize(
-                        real_array,
-                        [el * 2**scale for el in real_array.shape],
+            for coord in chunks_to_fetch:
+                yield chunk_fetcher(coord, scale, array)
+
+        else:
+            # Make a list of num_threads length sublists
+            all_job_sets = [
+                chunks_to_fetch[i]
+                for i in range(0, len(chunks_to_fetch))
+            ]
+
+            job_sets = [all_job_sets[idx:idx + num_threads] for idx in range(0, len(all_job_sets), num_threads)]
+
+            def mutable_chunk_fetcher(results, idx, coord, scale, array):
+                results[idx] = chunk_fetcher(coord, scale, array)
+                # LOGGER.info(f"mutable_get_chunk for scale {scale} updated {coord} @ {idx} as {results[idx].shape}")
+
+            for job_set in job_sets:
+                # Evaluate the jobs in parallel
+                # chunks = p.map(get_chunk, job_set)
+                # We need a mutable result
+                results = [None] * len(job_set)
+                # Make the threads
+
+                arg_set = [[results, idx] + [args, scale, array] for idx, args in enumerate(job_set)]
+
+                threads = [
+                    Thread(
+                        target=mutable_chunk_fetcher,
+                        args=arg_list
                     )
-                )
-                # upscaled = img_as_uint(rescale(real_array, 2**scale))
-
-                
-                LOGGER.info(
-                    f"yielding: {(z * 2**scale, y * 2**scale, x * 2**scale, scale, upscaled.shape)} sample {upscaled[10:20,10]} with sum {upscaled.sum()}"
-                )
-                # Return upscaled coordinates, the scale, and chunk
-                chunk_size = upscaled.shape
-
-                LOGGER.info(
-                    f"yield will be placed at: {(z * 2**scale, y * 2**scale, x * 2**scale, scale, upscaled.shape)}"
-                )
-
-                upscaled_chunk_size = [0, 0]
-                upscaled_chunk_size[0] = min(
-                    large_image["arrays"][0].shape[-2] - y * 2**scale,
-                    chunk_size[-2],
-                )
-                upscaled_chunk_size[1] = min(
-                    large_image["arrays"][0].shape[-1] - x * 2**scale,
-                    chunk_size[-1],
-                )
-
-                # overflow = np.array(large_image["arrays"][0].shape[-2:]) - (np.array((y, x)) + np.array(chunk_size))
-
-                # layer.data[z, y : (y + chunk_size[-2]), x : (x + chunk_size[-1])]
-
-                upscaled = upscaled[
-                    : upscaled_chunk_size[-2], : upscaled_chunk_size[-1]
+                    for arg_list in arg_set
                 ]
+                # Start threads
+                for thread in threads:
+                    thread.start()
 
-                # if sum(upscaled[10:20,10]) > 0:
-                #        import pdb; pdb.set_trace()
+                # Collect
+                for thread in threads:
+                    thread.join()
 
-                # if y == 0 and (x * 2**scale) == 7680:
-                #     import pdb; pdb.set_trace()
+                # Yield the chunks that are done
+                for idx in range(len(results)):
+                    print(f"jobs done: scale {scale} job_idx {idx} job_set {job_set[idx]} with result {results[idx]}")
+                    # Get job parameters
+                    z, y, x = job_set[idx]
 
-                # TODO pickup here, figure out why this is being placed out of bounds and crop it correctly
-                # [z, y : (y + chunk_size[-2]), x : (x + chunk_size[-1])]
+                    chunk_tuple = results[idx]
 
-                yield (
-                    z * 2**scale,
-                    y * 2**scale,
-                    x * 2**scale,
-                    scale,
-                    upscaled,
-                    upscaled_chunk_size,
-                )
-        # TODO all this needs to be updated for (xyz) -> (zyx) change
-        # else:
-        #     # Make a list of num_threads length sublists
-        #     job_sets = [
-        #         chunks_to_fetch[i : i + num_threads]
-        #         for i in range(0, len(chunks_to_fetch), num_threads)
-        #     ]
-
-        #     dataset = f"{large_image['dataset']}/s{scale}"
-
-        #     def mutable_get_chunk(results, idx, x, y, z):
-        #         results[idx] = get_chunk(
-        #             (x, y, z),
-        #             array=array,
-        #             container=large_image["container"],
-        #             dataset=dataset,
-        #         )
-
-        #     for job_set in job_sets:
-        #         # Evaluate the jobs in parallel
-        #         # chunks = p.map(get_chunk, job_set)
-        #         # We need a mutable result
-        #         chunks = [None] * len(job_set)
-        #         # Make the threads
-        #         threads = [
-        #             Thread(
-        #                 target=mutable_get_chunk,
-        #                 args=[chunks, idx] + list(args),
-        #             )
-        #             for idx, args in enumerate(job_set)
-        #         ]
-        #         # Start threads
-        #         for thread in threads:
-        #             thread.start()
-
-        #         # Collect
-        #         for thread in threads:
-        #             thread.join()
-
-        #         # Yield the chunks that are done
-        #         for idx in range(len(chunks)):
-        #             # Get job parameters
-        #             x, y, z = job_set[idx]
-        #             # This contains the real data
-        #             real_array = chunks[idx]
-        #             # Upscale the data to highest resolution
-        #             upscaled = resize(
-        #                 real_array,
-        #                 [el * 2**scale for el in real_array.shape],
-        #             )
-        #             # Return upscaled coordinates, the scale, and chunk
-        #             yield (
-        #                 x * 2**scale,
-        #                 y * 2**scale,
-        #                 z,
-        #                 scale,
-        #                 upscaled,
-        #             )
+                    LOGGER.info(f"scale of {scale} upscaled {chunk_tuple[-2].shape} chunksize {chunk_tuple[-1]} at {chunk_tuple[:3]}")
+                    
+                    # Return upscaled coordinates, the scale, and chunk
+                    yield chunk_tuple
 
 
 global worker
@@ -520,9 +517,6 @@ viewer.dims.events.connect(
 )
 
     
-viewer.camera.events.zoom.connect(dims_update_handler)
-viewer.camera.events.center.connect(dims_update_handler)
-
 
 # napari.run()
 

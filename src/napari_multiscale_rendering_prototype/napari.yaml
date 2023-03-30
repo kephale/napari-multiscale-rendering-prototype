@@ -2,20 +2,10 @@ name: napari-multiscale-rendering-prototype
 display_name: napari multiscale rendering prototype
 contributions:
   commands:
-    - id: napari-multiscale-rendering-prototype.make_qwidget
-      python_name: napari_multiscale_rendering_prototype._widget:ExampleQWidget
-      title: Make example QWidget
-    - id: napari-multiscale-rendering-prototype.make_magic_widget
-      python_name: napari_multiscale_rendering_prototype._widget:example_magic_widget
-      title: Make example magic widget
-    - id: napari-multiscale-rendering-prototype.make_func_widget
-      python_name: napari_multiscale_rendering_prototype._widget:example_function_widget
-      title: Make example function widget
+    - id: napari-multiscale-rendering-prototype.make_groups_widget
+      python_name: napari_multiscale_rendering_prototype.multiscale_rendering_ui:MultiscaleWidget
+      title: Make napari-multiscale-rendering widget
   widgets:
-    - command: napari-multiscale-rendering-prototype.make_qwidget
-      display_name: Example QWidget
-    - command: napari-multiscale-rendering-prototype.make_magic_widget
-      display_name: Example Magic Widget
-    - command: napari-multiscale-rendering-prototype.make_func_widget
-      autogenerate: true
-      display_name: Example Function Widget
+
+    - command: napari-multiscale-rendering-prototype.make_groups_widget
+      display_name: Multiscale Rendering

@@ -1,0 +1,8 @@
+name: napari-multiscale
+channels:
+  - conda-forge
+dependencies:
+  - python==3.10
+  - napari
+  - pip:
+    - fibsem-tools == 1.0.2

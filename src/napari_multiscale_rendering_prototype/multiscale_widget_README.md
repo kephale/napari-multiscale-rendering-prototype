@@ -39,11 +39,12 @@ pip install -e .
 
 Note: Currently, for the `Poor Octree` renderer, it is working with the `Luthi Zenodo` example if you right click on the `/B/03/03` level.
 
-In order to see 2D/3D, you will probably have to nagivate further into the tree.
+In order to see 2D/3D, you will have to nagivate further into the tree.
 
 
 ##  Add renderer to widget menu.
 
-1. In `multiscale_rendering_ui.py`, add an entry to the dictionary in the function `_get_available_renderers`.
+In `multiscale_rendering_ui.py`, add an entry to the dictionary in the function `_get_available_renderers`.
+
    Use form:
    `"<Render Display Name>": partial(<renderer function>)`
